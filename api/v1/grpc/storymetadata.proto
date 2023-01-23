@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package storymetadata.v1;
+
+option go_package = "github.com/koneal2013/storymetadatagenerator/api/storymetadata_v1";
+
+service storymetadata {
+  rpc GetMetadata(GetStoryMetadataRequest) returns (GetStoryMetadataResponse) {}
+}
+
+message GetStoryMetadataRequest {
+  int32 numberOfPages = 1;
+}
+
+message GetStoryMetadataResponse {
+   bytes stories = 1;
+   bytes errs = 2;
+}

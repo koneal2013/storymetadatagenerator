@@ -1,0 +1,23 @@
+mode: set
+github.com/koneal2013/storymetadatagenerator/internal/server/grpc.go:40.89,44.47 2 1
+github.com/koneal2013/storymetadatagenerator/internal/server/grpc.go:48.2,60.51 3 1
+github.com/koneal2013/storymetadatagenerator/internal/server/grpc.go:44.47,46.5 1 1
+github.com/koneal2013/storymetadatagenerator/internal/server/grpc.go:60.51,62.3 1 0
+github.com/koneal2013/storymetadatagenerator/internal/server/grpc.go:62.8,65.3 2 1
+github.com/koneal2013/storymetadatagenerator/internal/server/grpc.go:73.141,75.101 2 1
+github.com/koneal2013/storymetadatagenerator/internal/server/grpc.go:80.2,83.16 4 1
+github.com/koneal2013/storymetadatagenerator/internal/server/grpc.go:86.2,87.16 2 1
+github.com/koneal2013/storymetadatagenerator/internal/server/grpc.go:90.2,93.8 1 1
+github.com/koneal2013/storymetadatagenerator/internal/server/grpc.go:75.101,79.3 3 1
+github.com/koneal2013/storymetadatagenerator/internal/server/grpc.go:83.16,85.3 1 0
+github.com/koneal2013/storymetadatagenerator/internal/server/grpc.go:87.16,89.3 1 0
+github.com/koneal2013/storymetadatagenerator/internal/server/grpc.go:96.69,99.2 2 1
+github.com/koneal2013/storymetadatagenerator/internal/server/grpc.go:101.65,102.45 1 1
+github.com/koneal2013/storymetadatagenerator/internal/server/grpc.go:102.45,104.3 1 0
+github.com/koneal2013/storymetadatagenerator/internal/server/grpc.go:104.8,104.33 1 1
+github.com/koneal2013/storymetadatagenerator/internal/server/grpc.go:104.33,106.3 1 0
+github.com/koneal2013/storymetadatagenerator/internal/server/grpc.go:106.8,111.3 4 1
+github.com/koneal2013/storymetadatagenerator/internal/server/grpc.go:116.42,118.2 1 1
+github.com/koneal2013/storymetadatagenerator/internal/server/http.go:20.50,29.2 5 0
+github.com/koneal2013/storymetadatagenerator/internal/server/http.go:37.60,39.2 0 1
+github.com/koneal2013/storymetadatagenerator/internal/server/http.go:51.113,58.2 6 1

@@ -1,0 +1,19 @@
+{
+  "node-name": "",
+  "config-file":  "",
+  "is-development": "",
+  "http-port": "",
+  "grpc-port": "",
+  "enable-logging-middleware": "",
+  "acl-model-file": "",
+  "acl-policy-file": "",
+  "server-tls-cert-file": "",
+  "server-tls-key-file": "",
+  "server-tls-ca-file": "",
+  "peer-tls-cert-file": "",
+  "peer-tls-key-file": "",
+  "peer-tls-ca-file": "",
+  "optl-collector-endpoint": "",
+  "otpl-collector-insecure": "",
+}
+
