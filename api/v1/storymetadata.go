@@ -116,14 +116,20 @@ func (sr *StoryMetadataResult) LoadStories() {
 		sr.numOfStreamPages = 1
 	}
 	// get story streams with provided number of pages
-	go sr.processErrs()
 	go sr.getStoryStream(sr.numOfStreamPages)
 	go sr.getStoryMetadata()
-	go sr.processErrs()
 	for {
 		select {
 		case metadata := <-sr.storyMetadataResults:
 			sr.Stories[metadata.id] = metadata
+		case err := <-sr.errsChan:
+			storyErr := ErrorStoryMetadata{
+				Err: err,
+			}.Error()
+			sr.Errs = append(sr.Errs, &storyErr)
+			// increment the result count when an error occurs to ensure all goroutines return
+			sr.resultCount.Add(1)
+		default:
 			if sr.resultCount.Load() == uint32(sr.numOfStreamPages*10) {
 				close(sr.storyMetadataResults)
 				close(sr.errsChan)
