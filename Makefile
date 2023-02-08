@@ -56,7 +56,7 @@ start:
 	@./storymetadatagenerator --config-file=./config.json
 .PHONY: docker-start
 docker-start:
-	@docker-compose --project-name=storymetadatagenerator up -d
+	@docker-compose --project-name=storymetadatagenerator up --build --force-recreate -d
 .PHONY: docker-down
 docker-down:
 	@docker-compose --project-name=storymetadatagenerator down

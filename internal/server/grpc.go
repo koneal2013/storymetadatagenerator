@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel"
 	otel_codes "go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
@@ -68,22 +69,26 @@ func NewGRPCServer(config *GrpcConfig, opts ...grpc.ServerOption) (*grpc.Server,
 type grpcServer struct {
 	grpc_api.UnimplementedStorymetadataServer
 	*GrpcConfig
+	grpcTracer trace.Tracer
 }
 
 func (g grpcServer) GetMetadata(ctx context.Context, request *grpc_api.GetStoryMetadataRequest) (*grpc_api.GetStoryMetadataResponse, error) {
-	_, span := otel.GetTracerProvider().Tracer("GrpcTracer").Start(ctx, "GetMetadata")
+	_, span := g.grpcTracer.Start(ctx, "GetMetadata")
 	if err := g.Authorizer.Authorize(subject(ctx), objectWildCard, getStoryMetadataAction); err != nil {
 		span.RecordError(err)
 		span.SetStatus(otel_codes.Error, err.Error())
 		return nil, err
 	}
-	res := metadata_api_v1.New(int(request.NumberOfPages))
-	res.LoadStories()
-	storiesBytes, err := json.Marshal(res.Stories)
+	storyMetadata, err := metadata_api_v1.New(int(request.NumberOfPages))
 	if err != nil {
 		return nil, err
 	}
-	errsBytes, err := json.Marshal(res.Errs)
+	storyMetadata.LoadStories()
+	storiesBytes, err := json.Marshal(storyMetadata.Stories)
+	if err != nil {
+		return nil, err
+	}
+	errsBytes, err := json.Marshal(storyMetadata.Errs)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +99,10 @@ func (g grpcServer) GetMetadata(ctx context.Context, request *grpc_api.GetStoryM
 }
 
 func newGrpcServer(config *GrpcConfig) (srv *grpcServer, err error) {
-	srv = &grpcServer{GrpcConfig: config}
+	srv = &grpcServer{
+		GrpcConfig: config,
+		grpcTracer: otel.GetTracerProvider().Tracer("GrpcTracer"),
+	}
 	return srv, nil
 }
 

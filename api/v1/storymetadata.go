@@ -6,7 +6,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
+	"strings"
 	"sync/atomic"
+
+	"github.com/neurosnap/sentences"
+	"github.com/neurosnap/sentences/english"
+	"github.com/pkg/errors"
+
+	"github.com/koneal2013/storymetadatagenerator/api/util"
 )
 
 const (
@@ -20,6 +28,10 @@ type StoryStream struct {
 	Next     *string  `json:"next"`
 	Previous *string  `json:"previous"`
 	Results  []string `json:"results"`
+}
+
+type StoryMetadataResultI interface {
+	LoadStories() *StoryMetadataResult
 }
 
 type StoryMetadataResult struct {
@@ -40,20 +52,39 @@ type Block struct {
 }
 
 type StoryMetadata struct {
-	id          string
-	WordCount   int    `json:"word_count"`
-	ReadingTime string `json:"reading_time"`
-	Headline    string `json:"headline"`
-	Permalink   string `json:"permalink"`
-	Blocks      *Block `json:"blocks,omitempty"`
+	id                 string
+	WordCount          int `json:"word_count"`
+	sentenceCount      int
+	difficultWordCount int
+	ReadabilityScore   string `json:"readability_score"`
+	ReadingTime        string `json:"reading_time"`
+	Headline           string `json:"headline"`
+	Permalink          string `json:"permalink"`
+	Blocks             *Block `json:"blocks,omitempty"`
+}
+
+// calculateReadabilityScore sets StoryMetadata.ReadabilityScore
+func (s *StoryMetadata) calculateReadabilityScore() error {
+	if s.sentenceCount == 0 || s.WordCount == 0 {
+		return fmt.Errorf("unable to calculate readability sscore for story with id [%s]: word count or sentence count is zero", s.id)
+	}
+	difficultWordPercentage := (float32(s.difficultWordCount) / float32(s.WordCount)) * 100
+	averageSentenceLength := float32(s.WordCount) / float32(s.sentenceCount)
+	if difficultWordPercentage > 5 {
+		// if difficultWordPercentage is above 5% add 3.6365 to readability score
+		s.ReadabilityScore = fmt.Sprintf("%.1f", ((0.1579*difficultWordPercentage)+(0.0496*averageSentenceLength))+3.6365)
+		return nil
+	}
+	s.ReadabilityScore = fmt.Sprintf("%.1f", (0.1579*difficultWordPercentage)+(0.0496*averageSentenceLength))
+	return nil
 }
 
 // calculateReadingTime calculates the average adult reading time based on StoryMetadata.WordCount and AVERAGE_ADULT_WPM then sets StoryMetadata.ReadingTime
 func (s *StoryMetadata) calculateReadingTime() error {
-	wpm := s.WordCount / AVERAGE_ADULT_WPM
 	if s.WordCount == 0 {
 		return fmt.Errorf("unable to calculate read time for story with id [%s]: word count is zero", s.id)
 	}
+	wpm := s.WordCount / AVERAGE_ADULT_WPM
 	if wpm == 0 {
 		s.ReadingTime = "<1"
 		return nil
@@ -62,14 +93,29 @@ func (s *StoryMetadata) calculateReadingTime() error {
 	return nil
 }
 
-// CalculateWordCount counts the words in each block and sets the WordCount field on the StoryMetadata struct
-func (s *StoryMetadata) calculateWordCount() error {
+// calculateCount counts the words and sentences in each block and sets the WordCount & sentenceCount fields on the StoryMetadata struct
+func (s *StoryMetadata) calculateCount(tokenizer *sentences.DefaultSentenceTokenizer) error {
+	nonAlphanumericRegex := regexp.MustCompile(`[^a-zA-Z0-9 ]+`)
+	easyWords, err := util.GetEasyWords()
+	if err != nil {
+		return err
+	}
+
 	for _, block := range *s.Blocks.Blocks {
+		// check for Sentences
+		s.sentenceCount += len(tokenizer.Tokenize(strings.TrimSpace(block.Text)))
+
 		text := bytes.NewBufferString(block.Text)
 		scanner := bufio.NewScanner(text)
 		scanner.Split(bufio.ScanWords)
 
 		for scanner.Scan() {
+			word := scanner.Text()
+			// check for difficult word
+			word = nonAlphanumericRegex.ReplaceAllString(word, "")
+			if _, ok := easyWords[word]; !ok {
+				s.difficultWordCount++
+			}
 			if err := scanner.Err(); err != nil {
 				// reset word count to zero if there is an error counting the words
 				s.WordCount = 0
@@ -82,8 +128,9 @@ func (s *StoryMetadata) calculateWordCount() error {
 }
 
 // New takes the number of steam pages to retrieve as a parameter and returns a pointer to a StoryMetadataResult struct
-func New(numOfStreamPages int) *StoryMetadataResult {
+func New(numOfStreamPages int) (*StoryMetadataResult, error) {
 	chanSize := int(float64(numOfStreamPages) * 0.05)
+	// load metadata for sentence tokenizer
 	return &StoryMetadataResult{
 		Stories:              map[string]*StoryMetadata{},
 		storyMetadataResults: make(chan *StoryMetadata, chanSize),
@@ -91,26 +138,16 @@ func New(numOfStreamPages int) *StoryMetadataResult {
 		errsChan:             make(chan error, 1),
 		resultCount:          &atomic.Uint32{},
 		numOfStreamPages:     numOfStreamPages,
-	}
-}
-
-// processErrs reads from the StoryMetadataResult.errsChan channel and appends errors to the StoryMetadataResult.Errs slice which is returned as a part of the response
-func (sr *StoryMetadataResult) processErrs() {
-	for err := range sr.errsChan {
-		storyErr := ErrorStoryMetadata{
-			Err: err,
-		}.Error()
-		sr.Errs = append(sr.Errs, &storyErr)
-	}
+	}, nil
 }
 
 // LoadStories gets and processes the number of stream pages (set by New).
 // LoadStories calls StoryMetadata.CalculateWordCount and StoryMetadata.CalculateReadingTime
-func (sr *StoryMetadataResult) LoadStories() {
+func (sr *StoryMetadataResult) LoadStories() *StoryMetadataResult {
 	if sr.numOfStreamPages < 0 {
 		close(sr.storyMetadataResults)
 		close(sr.errsChan)
-		return
+		return sr
 	}
 	if sr.numOfStreamPages == 0 {
 		sr.numOfStreamPages = 1
@@ -120,7 +157,11 @@ func (sr *StoryMetadataResult) LoadStories() {
 	go sr.getStoryMetadata()
 	for {
 		select {
-		case metadata := <-sr.storyMetadataResults:
+		case metadata, ok := <-sr.storyMetadataResults:
+			if !ok {
+				close(sr.errsChan)
+				return sr
+			}
 			sr.Stories[metadata.id] = metadata
 		case err := <-sr.errsChan:
 			storyErr := ErrorStoryMetadata{
@@ -133,7 +174,7 @@ func (sr *StoryMetadataResult) LoadStories() {
 			if sr.resultCount.Load() == uint32(sr.numOfStreamPages*10) {
 				close(sr.storyMetadataResults)
 				close(sr.errsChan)
-				return
+				return sr
 			}
 		}
 	}
@@ -145,7 +186,6 @@ func (sr *StoryMetadataResult) getStoryMetadata() {
 	for storyStream := range sr.storyStreamResults {
 		for _, storyId := range storyStream.Results {
 			go func(id string) {
-				defer sr.resultCount.Add(1)
 				metadata := &StoryMetadata{}
 				err := getResource(fmt.Sprintf("%s%s/", STORY_URL, id), metadata)
 				if err != nil {
@@ -153,7 +193,13 @@ func (sr *StoryMetadataResult) getStoryMetadata() {
 					return
 				}
 				metadata.id = id
-				err = metadata.calculateWordCount()
+				// load and instantiate the sentence tokenizer for each goroutine
+				t, err := english.NewSentenceTokenizer(nil)
+				if err != nil {
+					sr.errsChan <- errors.WithMessagef(err, "could not load sentence tokenizer for story id [%s]", id)
+					return
+				}
+				err = metadata.calculateCount(t)
 				if err != nil {
 					sr.errsChan <- err
 					return
@@ -163,8 +209,14 @@ func (sr *StoryMetadataResult) getStoryMetadata() {
 					sr.errsChan <- err
 					return
 				}
+				err = metadata.calculateReadabilityScore()
+				if err != nil {
+					sr.errsChan <- err
+					return
+				}
 				metadata.Blocks = nil
 				sr.storyMetadataResults <- metadata
+				sr.resultCount.Add(1)
 				return
 			}(storyId)
 		}
@@ -175,19 +227,18 @@ func (sr *StoryMetadataResult) getStoryMetadata() {
 func (sr *StoryMetadataResult) getStoryStream(numOfStreamPages int) {
 	defer close(sr.storyStreamResults)
 	storyStream := &StoryStream{}
-	resp, err := http.Get(STORY_STREAM_URL)
+	err := getResource(STORY_STREAM_URL, storyStream)
 	if err != nil {
 		sr.errsChan <- err
+		// if the initial story stream retrieve fails, no further stories can be processed, so we close the metadata results channel
+		close(sr.storyMetadataResults)
 		return
-	}
-	defer resp.Body.Close()
-	if err = json.NewDecoder(resp.Body).Decode(storyStream); err != nil {
-		sr.errsChan <- err
 	}
 	sr.storyStreamResults <- storyStream
 	for storyStream.Next != nil && numOfStreamPages != 1 {
 		if err = getResource(*storyStream.Next, storyStream); err != nil {
 			sr.errsChan <- err
+			numOfStreamPages--
 			return
 		}
 		sr.storyStreamResults <- storyStream
@@ -198,14 +249,14 @@ func (sr *StoryMetadataResult) getStoryStream(numOfStreamPages int) {
 func getResource[T StoryStream | StoryMetadata](url string, resource *T) error {
 	resp, err := http.Get(url)
 	if err != nil {
-		return err
+		return errors.WithMessagef(err, "error getting resource located at [%s]: ", url)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == 404 {
+	if resp.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("resource located at [%s] could not be found", url)
 	}
 	if err = json.NewDecoder(resp.Body).Decode(resource); err != nil {
-		return err
+		return errors.WithMessagef(err, "error getting resource located at [%s]: ", url)
 	}
 	return nil
 }

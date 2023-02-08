@@ -3,7 +3,7 @@
 <html>
 	<head>
 		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-		<title>server: Go Coverage Report</title>
+		<title>v1: Go Coverage Report</title>
 		<style>
 			body {
 				background: black;
@@ -55,9 +55,13 @@
 			<div id="nav">
 				<select id="files">
 
-				<option value="file0">github.com/koneal2013/storymetadatagenerator/internal/server/grpc.go (85.3%)</option>
+				<option value="file0">github.com/koneal2013/storymetadatagenerator/api/v1/error.go (0.0%)</option>
 
-				<option value="file1">github.com/koneal2013/storymetadatagenerator/internal/server/http.go (54.5%)</option>
+				<option value="file1">github.com/koneal2013/storymetadatagenerator/api/v1/storymetadata.go (19.6%)</option>
+
+				<option value="file2">github.com/koneal2013/storymetadatagenerator/internal/server/grpc.go (83.3%)</option>
+
+				<option value="file3">github.com/koneal2013/storymetadatagenerator/internal/server/http.go (46.2%)</option>
 
 				</select>
 			</div>
@@ -71,7 +75,282 @@
 		</div>
 		<div id="content">
 
-		<pre class="file" id="file0" style="display: none">package server
+		<pre class="file" id="file0" style="display: none">package storymetadata_v1
+
+type ErrorStoryMetadata struct {
+        Err error `json:"error"`
+}
+
+func (e ErrorStoryMetadata) Error() string <span class="cov0" title="0">{
+        return e.Err.Error()
+}</span>
+</pre>
+
+		<pre class="file" id="file1" style="display: none">package storymetadata_v1
+
+import (
+        "bufio"
+        "bytes"
+        "encoding/json"
+        "fmt"
+        "net/http"
+        "regexp"
+        "strings"
+        "sync/atomic"
+
+        "github.com/neurosnap/sentences"
+        "github.com/neurosnap/sentences/english"
+        "github.com/pkg/errors"
+
+        "github.com/koneal2013/storymetadatagenerator/api/util"
+)
+
+const (
+        AVERAGE_ADULT_WPM = 238
+        STORY_STREAM_URL  = "https://api.axios.com/api/render/stream/content/"
+        STORY_URL         = "https://api.axios.com/api/render/content/"
+)
+
+type StoryStream struct {
+        Count    int      `json:"count"`
+        Next     *string  `json:"next"`
+        Previous *string  `json:"previous"`
+        Results  []string `json:"results"`
+}
+
+type StoryMetadataResultI interface {
+        LoadStories() *StoryMetadataResult
+}
+
+type StoryMetadataResult struct {
+        Stories              map[string]*StoryMetadata `json:"stories"`
+        Errs                 []*string                 `json:"errors,omitempty"`
+        errsChan             chan error
+        storyMetadataResults chan *StoryMetadata
+        storyStreamResults   chan *StoryStream
+        resultCount          *atomic.Uint32
+        numOfStreamPages     int
+}
+
+type BlockInternal struct {
+        Text string `json:"text"`
+}
+type Block struct {
+        Blocks *[]BlockInternal `json:"blocks"`
+}
+
+type StoryMetadata struct {
+        id                 string
+        WordCount          int `json:"word_count"`
+        sentenceCount      int
+        difficultWordCount int
+        ReadabilityScore   string `json:"readability_score"`
+        ReadingTime        string `json:"reading_time"`
+        Headline           string `json:"headline"`
+        Permalink          string `json:"permalink"`
+        Blocks             *Block `json:"blocks,omitempty"`
+}
+
+// calculateReadabilityScore sets StoryMetadata.ReadabilityScore
+func (s *StoryMetadata) calculateReadabilityScore() error <span class="cov8" title="1">{
+        if s.sentenceCount == 0 || s.WordCount == 0 </span><span class="cov0" title="0">{
+                return fmt.Errorf("unable to calculate readability sscore for story with id [%s]: word count or sentence count is zero", s.id)
+        }</span>
+        <span class="cov8" title="1">difficultWordPercentage := (float32(s.difficultWordCount) / float32(s.WordCount)) * 100
+        averageSentenceLength := float32(s.WordCount) / float32(s.sentenceCount)
+        if difficultWordPercentage &gt; 5 </span><span class="cov8" title="1">{
+                // if difficultWordPercentage is above 5% add 3.6365 to readability score
+                s.ReadabilityScore = fmt.Sprintf("%.1f", ((0.1579*difficultWordPercentage)+(0.0496*averageSentenceLength))+3.6365)
+                return nil
+        }</span>
+        <span class="cov0" title="0">s.ReadabilityScore = fmt.Sprintf("%.1f", (0.1579*difficultWordPercentage)+(0.0496*averageSentenceLength))
+        return nil</span>
+}
+
+// calculateReadingTime calculates the average adult reading time based on StoryMetadata.WordCount and AVERAGE_ADULT_WPM then sets StoryMetadata.ReadingTime
+func (s *StoryMetadata) calculateReadingTime() error <span class="cov0" title="0">{
+        if s.WordCount == 0 </span><span class="cov0" title="0">{
+                return fmt.Errorf("unable to calculate read time for story with id [%s]: word count is zero", s.id)
+        }</span>
+        <span class="cov0" title="0">wpm := s.WordCount / AVERAGE_ADULT_WPM
+        if wpm == 0 </span><span class="cov0" title="0">{
+                s.ReadingTime = "&lt;1"
+                return nil
+        }</span>
+        <span class="cov0" title="0">s.ReadingTime = fmt.Sprintf("%d", wpm)
+        return nil</span>
+}
+
+// calculateCount counts the words and sentences in each block and sets the WordCount &amp; sentenceCount fields on the StoryMetadata struct
+func (s *StoryMetadata) calculateCount(tokenizer *sentences.DefaultSentenceTokenizer) error <span class="cov8" title="1">{
+        nonAlphanumericRegex := regexp.MustCompile(`[^a-zA-Z0-9 ]+`)
+        easyWords, err := util.GetEasyWords()
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">for _, block := range *s.Blocks.Blocks </span><span class="cov8" title="1">{
+                // check for Sentences
+                s.sentenceCount += len(tokenizer.Tokenize(strings.TrimSpace(block.Text)))
+
+                text := bytes.NewBufferString(block.Text)
+                scanner := bufio.NewScanner(text)
+                scanner.Split(bufio.ScanWords)
+
+                for scanner.Scan() </span><span class="cov8" title="1">{
+                        word := scanner.Text()
+                        // check for difficult word
+                        word = nonAlphanumericRegex.ReplaceAllString(word, "")
+                        if _, ok := easyWords[word]; !ok </span><span class="cov8" title="1">{
+                                s.difficultWordCount++
+                        }</span>
+                        <span class="cov8" title="1">if err := scanner.Err(); err != nil </span><span class="cov0" title="0">{
+                                // reset word count to zero if there is an error counting the words
+                                s.WordCount = 0
+                                return fmt.Errorf("unable to calculate word count for story with id [%s]", s.id)
+                        }</span>
+                        <span class="cov8" title="1">s.WordCount++</span>
+                }
+        }
+        <span class="cov8" title="1">return nil</span>
+}
+
+// New takes the number of steam pages to retrieve as a parameter and returns a pointer to a StoryMetadataResult struct
+func New(numOfStreamPages int) (*StoryMetadataResult, error) <span class="cov0" title="0">{
+        chanSize := int(float64(numOfStreamPages) * 0.05)
+        // load metadata for sentence tokenizer
+        return &amp;StoryMetadataResult{
+                Stories:              map[string]*StoryMetadata{},
+                storyMetadataResults: make(chan *StoryMetadata, chanSize),
+                storyStreamResults:   make(chan *StoryStream, chanSize),
+                errsChan:             make(chan error, 1),
+                resultCount:          &amp;atomic.Uint32{},
+                numOfStreamPages:     numOfStreamPages,
+        }, nil
+}</span>
+
+// LoadStories gets and processes the number of stream pages (set by New).
+// LoadStories calls StoryMetadata.CalculateWordCount and StoryMetadata.CalculateReadingTime
+func (sr *StoryMetadataResult) LoadStories() *StoryMetadataResult <span class="cov0" title="0">{
+        if sr.numOfStreamPages &lt; 0 </span><span class="cov0" title="0">{
+                close(sr.storyMetadataResults)
+                close(sr.errsChan)
+                return sr
+        }</span>
+        <span class="cov0" title="0">if sr.numOfStreamPages == 0 </span><span class="cov0" title="0">{
+                sr.numOfStreamPages = 1
+        }</span>
+        // get story streams with provided number of pages
+        <span class="cov0" title="0">go sr.getStoryStream(sr.numOfStreamPages)
+        go sr.getStoryMetadata()
+        for </span><span class="cov0" title="0">{
+                select </span>{
+                case metadata, ok := &lt;-sr.storyMetadataResults:<span class="cov0" title="0">
+                        if !ok </span><span class="cov0" title="0">{
+                                close(sr.errsChan)
+                                return sr
+                        }</span>
+                        <span class="cov0" title="0">sr.Stories[metadata.id] = metadata</span>
+                case err := &lt;-sr.errsChan:<span class="cov0" title="0">
+                        storyErr := ErrorStoryMetadata{
+                                Err: err,
+                        }.Error()
+                        sr.Errs = append(sr.Errs, &amp;storyErr)
+                        // increment the result count when an error occurs to ensure all goroutines return
+                        sr.resultCount.Add(1)</span>
+                default:<span class="cov0" title="0">
+                        if sr.resultCount.Load() == uint32(sr.numOfStreamPages*10) </span><span class="cov0" title="0">{
+                                close(sr.storyMetadataResults)
+                                close(sr.errsChan)
+                                return sr
+                        }</span>
+                }
+        }
+}
+
+// getStoryMetadata creates StoryMetadata objects for each story in StoryMetadataResult.storyStreamResults and sends them to the StoryMetadataResult.storyMetadataResults channel
+func (sr *StoryMetadataResult) getStoryMetadata() <span class="cov0" title="0">{
+        // get individual story metadata
+        for storyStream := range sr.storyStreamResults </span><span class="cov0" title="0">{
+                for _, storyId := range storyStream.Results </span><span class="cov0" title="0">{
+                        go func(id string) </span><span class="cov0" title="0">{
+                                metadata := &amp;StoryMetadata{}
+                                err := getResource(fmt.Sprintf("%s%s/", STORY_URL, id), metadata)
+                                if err != nil </span><span class="cov0" title="0">{
+                                        sr.errsChan &lt;- err
+                                        return
+                                }</span>
+                                <span class="cov0" title="0">metadata.id = id
+                                // load and instantiate the sentence tokenizer for each goroutine
+                                t, err := english.NewSentenceTokenizer(nil)
+                                if err != nil </span><span class="cov0" title="0">{
+                                        sr.errsChan &lt;- errors.WithMessagef(err, "could not load sentence tokenizer for story id [%s]", storyId)
+                                        return
+                                }</span>
+                                <span class="cov0" title="0">err = metadata.calculateCount(t)
+                                if err != nil </span><span class="cov0" title="0">{
+                                        sr.errsChan &lt;- err
+                                        return
+                                }</span>
+                                <span class="cov0" title="0">err = metadata.calculateReadingTime()
+                                if err != nil </span><span class="cov0" title="0">{
+                                        sr.errsChan &lt;- err
+                                        return
+                                }</span>
+                                <span class="cov0" title="0">err = metadata.calculateReadabilityScore()
+                                if err != nil </span><span class="cov0" title="0">{
+                                        sr.errsChan &lt;- err
+                                        return
+                                }</span>
+                                <span class="cov0" title="0">metadata.Blocks = nil
+                                sr.storyMetadataResults &lt;- metadata
+                                sr.resultCount.Add(1)
+                                return</span>
+                        }(storyId)
+                }
+        }
+}
+
+// getStoryStream gets the number of story stream pages based on the value in StoryMetadataResult.numOfStreamPages and creates StoryStream objects for each story. Each StoryStream object is then pushed to the StoryMetadataResult.storyStreamResults channel
+func (sr *StoryMetadataResult) getStoryStream(numOfStreamPages int) <span class="cov0" title="0">{
+        defer close(sr.storyStreamResults)
+        storyStream := &amp;StoryStream{}
+        err := getResource(STORY_STREAM_URL, storyStream)
+        if err != nil </span><span class="cov0" title="0">{
+                sr.errsChan &lt;- err
+                // if the initial story stream retrieve fails, no further stories can be processed, so we close the metadata results channel
+                close(sr.storyMetadataResults)
+                return
+        }</span>
+        <span class="cov0" title="0">sr.storyStreamResults &lt;- storyStream
+        for storyStream.Next != nil &amp;&amp; numOfStreamPages != 1 </span><span class="cov0" title="0">{
+                if err = getResource(*storyStream.Next, storyStream); err != nil </span><span class="cov0" title="0">{
+                        sr.errsChan &lt;- err
+                        numOfStreamPages--
+                        return
+                }</span>
+                <span class="cov0" title="0">sr.storyStreamResults &lt;- storyStream
+                numOfStreamPages--</span>
+        }
+}
+
+func getResource[T StoryStream | StoryMetadata](url string, resource *T) error <span class="cov0" title="0">{
+        resp, err := http.Get(url)
+        if err != nil </span><span class="cov0" title="0">{
+                return errors.WithMessagef(err, "error getting resource located at [%s]: ", url)
+        }</span>
+        <span class="cov0" title="0">defer resp.Body.Close()
+        if resp.StatusCode == 404 </span><span class="cov0" title="0">{
+                return fmt.Errorf("resource located at [%s] could not be found", url)
+        }</span>
+        <span class="cov0" title="0">if err = json.NewDecoder(resp.Body).Decode(resource); err != nil </span><span class="cov0" title="0">{
+                return errors.WithMessagef(err, "error getting resource located at [%s]: ", url)
+        }</span>
+        <span class="cov0" title="0">return nil</span>
+}
+</pre>
+
+		<pre class="file" id="file2" style="display: none">package server
 
 import (
         "context"
@@ -85,6 +364,7 @@ import (
         "go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
         "go.opentelemetry.io/otel"
         otel_codes "go.opentelemetry.io/otel/codes"
+        "go.opentelemetry.io/otel/trace"
         "go.uber.org/zap"
         "go.uber.org/zap/zapcore"
         "google.golang.org/grpc"
@@ -141,22 +421,26 @@ func NewGRPCServer(config *GrpcConfig, opts ...grpc.ServerOption) (*grpc.Server,
 type grpcServer struct {
         grpc_api.UnimplementedStorymetadataServer
         *GrpcConfig
+        grpcTracer trace.Tracer
 }
 
 func (g grpcServer) GetMetadata(ctx context.Context, request *grpc_api.GetStoryMetadataRequest) (*grpc_api.GetStoryMetadataResponse, error) <span class="cov8" title="1">{
-        _, span := otel.GetTracerProvider().Tracer("GrpcTracer").Start(ctx, "GetMetadata")
+        _, span := g.grpcTracer.Start(ctx, "GetMetadata")
         if err := g.Authorizer.Authorize(subject(ctx), objectWildCard, getStoryMetadataAction); err != nil </span><span class="cov8" title="1">{
                 span.RecordError(err)
                 span.SetStatus(otel_codes.Error, err.Error())
                 return nil, err
         }</span>
-        <span class="cov8" title="1">res := metadata_api_v1.New(int(request.NumberOfPages))
-        res.LoadStories()
-        storiesBytes, err := json.Marshal(res.Stories)
+        <span class="cov8" title="1">storyMetadata, err := metadata_api_v1.New(int(request.NumberOfPages))
         if err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
-        <span class="cov8" title="1">errsBytes, err := json.Marshal(res.Errs)
+        <span class="cov8" title="1">storyMetadata.LoadStories()
+        storiesBytes, err := json.Marshal(storyMetadata.Stories)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov8" title="1">errsBytes, err := json.Marshal(storyMetadata.Errs)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, err
         }</span>
@@ -167,7 +451,10 @@ func (g grpcServer) GetMetadata(ctx context.Context, request *grpc_api.GetStoryM
 }
 
 func newGrpcServer(config *GrpcConfig) (srv *grpcServer, err error) <span class="cov8" title="1">{
-        srv = &amp;grpcServer{GrpcConfig: config}
+        srv = &amp;grpcServer{
+                GrpcConfig: config,
+                grpcTracer: otel.GetTracerProvider().Tracer("GrpcTracer"),
+        }
         return srv, nil
 }</span>
 
@@ -191,7 +478,7 @@ func subject(ctx context.Context) string <span class="cov8" title="1">{
 }</span>
 </pre>
 
-		<pre class="file" id="file1" style="display: none">package server
+		<pre class="file" id="file3" style="display: none">package server
 
 import (
         "context"
@@ -200,6 +487,7 @@ import (
 
         "github.com/gorilla/mux"
         "go.opentelemetry.io/otel"
+        "go.opentelemetry.io/otel/trace"
 
         storymetadata_v1 "github.com/koneal2013/storymetadatagenerator/api/v1"
         "github.com/koneal2013/storymetadatagenerator/internal/middleware/adaptor"
@@ -210,10 +498,17 @@ type HttpConfig struct {
         MiddlewareFuncs []mux.MiddlewareFunc
 }
 
+type httpSvrDeps struct {
+        httpTracer trace.Tracer
+}
+
 func NewHTTPServer(cfg *HttpConfig) *http.Server <span class="cov0" title="0">{
+        storyMetadata := &amp;httpSvrDeps{
+                httpTracer: otel.GetTracerProvider().Tracer("httpTracer"),
+        }
         r := mux.NewRouter()
-        r.HandleFunc("/v1/story_metadata", adaptor.GenericHttpAdaptor(handleGetStoryMetadata)).Methods(http.MethodGet)
-        r.HandleFunc("/status", handleStatus).Methods(http.MethodGet)
+        r.HandleFunc("/v1/story_metadata", adaptor.GenericHttpAdaptor(storyMetadata.handleGetStoryMetadata)).Methods(http.MethodGet)
+        r.HandleFunc("/status", storyMetadata.handleStatus).Methods(http.MethodGet)
         r.Use(cfg.MiddlewareFuncs...)
         return &amp;http.Server{
                 Addr:    fmt.Sprintf(":%d", cfg.Port),
@@ -227,7 +522,7 @@ func NewHTTPServer(cfg *HttpConfig) *http.Server <span class="cov0" title="0">{
 //        @Success                200        {object}        string
 //
 //        @Router                        /status [get]
-func handleStatus(w http.ResponseWriter, r *http.Request) {<span class="cov8" title="1">
+func (s *httpSvrDeps) handleStatus(w http.ResponseWriter, r *http.Request) {<span class="cov8" title="1">
 
 }</span>
 
@@ -241,14 +536,16 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {<span class="cov8" ti
 //        @Failure                400                {object}        string
 //        @Failure                404                {object}        string
 //        @Router                        /v1/story_metadata [get]
-func handleGetStoryMetadata(ctx context.Context, in int) (out *storymetadata_v1.StoryMetadataResult, err error) <span class="cov8" title="1">{
-        _, span := otel.GetTracerProvider().Tracer("httpTracer").Start(ctx, "/v1/story_metadata")
+func (s *httpSvrDeps) handleGetStoryMetadata(ctx context.Context, in int) (out storymetadata_v1.StoryMetadataResultI, err error) <span class="cov8" title="1">{
+        _, span := s.httpTracer.Start(ctx, "/v1/story_metadata")
         defer span.End()
-        resp := storymetadata_v1.New(in)
-        resp.LoadStories()
-        out = resp
-        return
-}</span>
+        storyMetadata, err := storymetadata_v1.New(in)
+        if err != nil </span><span class="cov0" title="0">{
+                return
+        }</span>
+        <span class="cov8" title="1">out = storyMetadata.LoadStories()
+        return</span>
+}
 </pre>
 
 		</div>

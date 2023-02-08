@@ -7,6 +7,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 
 	storymetadata_v1 "github.com/koneal2013/storymetadatagenerator/api/v1"
 	"github.com/koneal2013/storymetadatagenerator/internal/middleware/adaptor"
@@ -17,10 +18,17 @@ type HttpConfig struct {
 	MiddlewareFuncs []mux.MiddlewareFunc
 }
 
+type httpSvrDeps struct {
+	httpTracer trace.Tracer
+}
+
 func NewHTTPServer(cfg *HttpConfig) *http.Server {
+	storyMetadata := &httpSvrDeps{
+		httpTracer: otel.GetTracerProvider().Tracer("httpTracer"),
+	}
 	r := mux.NewRouter()
-	r.HandleFunc("/v1/story_metadata", adaptor.GenericHttpAdaptor(handleGetStoryMetadata)).Methods(http.MethodGet)
-	r.HandleFunc("/status", handleStatus).Methods(http.MethodGet)
+	r.HandleFunc("/v1/story_metadata", adaptor.GenericHttpAdaptor(storyMetadata.handleGetStoryMetadata)).Methods(http.MethodGet)
+	r.HandleFunc("/status", storyMetadata.handleStatus).Methods(http.MethodGet)
 	r.Use(cfg.MiddlewareFuncs...)
 	return &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Port),
@@ -34,7 +42,7 @@ func NewHTTPServer(cfg *HttpConfig) *http.Server {
 //	@Success		200	{object}	string
 //
 //	@Router			/status [get]
-func handleStatus(w http.ResponseWriter, r *http.Request) {
+func (s *httpSvrDeps) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 }
 
@@ -48,11 +56,13 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 //	@Failure		400		{object}	string
 //	@Failure		404		{object}	string
 //	@Router			/v1/story_metadata [get]
-func handleGetStoryMetadata(ctx context.Context, in int) (out *storymetadata_v1.StoryMetadataResult, err error) {
-	_, span := otel.GetTracerProvider().Tracer("httpTracer").Start(ctx, "/v1/story_metadata")
+func (s *httpSvrDeps) handleGetStoryMetadata(ctx context.Context, in int) (out storymetadata_v1.StoryMetadataResultI, err error) {
+	_, span := s.httpTracer.Start(ctx, "/v1/story_metadata")
 	defer span.End()
-	resp := storymetadata_v1.New(in)
-	resp.LoadStories()
-	out = resp
+	storyMetadata, err := storymetadata_v1.New(in)
+	if err != nil {
+		return
+	}
+	out = storyMetadata.LoadStories()
 	return
 }

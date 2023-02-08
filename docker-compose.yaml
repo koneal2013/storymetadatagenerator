@@ -47,6 +47,7 @@ services:
         condition: service_started
     volumes:
       - ./config.json:/etc/config.json
+      - ./api/util/easy_words.txt:/api/util/easy_words.txt
 
   prometheus:
     container_name: prometheus
