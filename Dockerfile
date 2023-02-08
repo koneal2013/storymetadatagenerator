@@ -6,7 +6,7 @@ COPY go.mod .
 COPY go.sum .
 RUN go mod download
 # Copy the source files from the host
-COPY . /go/src/axios-be-exercise-kenston-oneal
+COPY . /go/src/storymetadatagenerator
 
 RUN CGO_ENABLED=0 GOOS=linux go build -o /go/bin/storymetadatagenerator ./cmd/storymetadatagenerator
 
