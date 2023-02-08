@@ -1,6 +1,6 @@
 module github.com/koneal2013/storymetadatagenerator
 
-go 1.19
+go 1.20
 
 require (
 	github.com/casbin/casbin v1.9.1

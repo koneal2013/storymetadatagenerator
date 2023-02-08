@@ -1,4 +1,4 @@
-FROM golang:1.19-alpine as build
+FROM golang:1.20-alpine as build
 # Set the working directory
 WORKDIR /go/src/storymetadatagenerator
 # Copy and download dependencies using go mod
