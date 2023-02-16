@@ -74,6 +74,7 @@ type grpcServer struct {
 
 func (g grpcServer) GetMetadata(ctx context.Context, request *grpc_api.GetStoryMetadataRequest) (*grpc_api.GetStoryMetadataResponse, error) {
 	_, span := g.grpcTracer.Start(ctx, "GetMetadata")
+	defer span.End()
 	if err := g.Authorizer.Authorize(subject(ctx), objectWildCard, getStoryMetadataAction); err != nil {
 		span.RecordError(err)
 		span.SetStatus(otel_codes.Error, err.Error())
