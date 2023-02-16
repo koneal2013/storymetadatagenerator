@@ -56,13 +56,13 @@ func (s *httpSvrDeps) handleStatus(w http.ResponseWriter, r *http.Request) {
 //	@Failure		400		{object}	string
 //	@Failure		404		{object}	string
 //	@Router			/v1/story_metadata [get]
-func (s *httpSvrDeps) handleGetStoryMetadata(ctx context.Context, in int) (out storymetadata_v1.StoryMetadataResultI, err error) {
+func (s *httpSvrDeps) handleGetStoryMetadata(ctx context.Context, in int) (out *storymetadata_v1.StoryMetadataResult, err error) {
 	_, span := s.httpTracer.Start(ctx, "/v1/story_metadata")
 	defer span.End()
 	storyMetadata, err := storymetadata_v1.New(in)
 	if err != nil {
 		return
 	}
-	out = storyMetadata.LoadStories()
+	out = storyMetadata.LoadStories(ctx)
 	return
 }

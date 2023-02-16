@@ -14,6 +14,11 @@ import (
 	"github.com/koneal2013/storymetadatagenerator/internal/middleware"
 )
 
+const (
+	HttpDefaultPort = 8080
+	RpcDefaultPort  = 8081
+)
+
 type cli struct {
 	cfg cfg
 }
@@ -54,6 +59,7 @@ func (c *cli) setupConfig(cmd *cobra.Command, args []string) error {
 		}
 		c.cfg.MiddlewareFuncs = append(c.cfg.MiddlewareFuncs, middleware.Recovery)
 	}
+
 	return nil
 }
 
@@ -65,6 +71,7 @@ func (c *cli) run(cmd *cobra.Command, args []string) error {
 		sigc := make(chan os.Signal, 1)
 		signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)
 		<-sigc
+
 		return agent.Shutdown()
 	}
 }
@@ -80,8 +87,8 @@ func setupFlags(cmd *cobra.Command) error {
 		cmd.Flags().String("node-name", hostname, "Unique server ID.")
 		cmd.Flags().String("config-file", "", "Path to config file.")
 		cmd.Flags().Bool("is-development", true, "Flag to set log level.")
-		cmd.Flags().Int("http-port", 8080, "Port to serve Http requests on.")
-		cmd.Flags().Int("grpc-port", 8081, "Port to serve Grpc requests on.")
+		cmd.Flags().Int("http-port", HttpDefaultPort, "Port to serve Http requests on.")
+		cmd.Flags().Int("grpc-port", RpcDefaultPort, "Port to serve Grpc requests on.")
 		cmd.Flags().Bool("enable-logging-middleware", true, "Enable logging of each request")
 		cmd.Flags().String("acl-model-file", "", "Path to ACL model.")
 		cmd.Flags().String("acl-policy-file", "", "Path to ACL policy.")
@@ -93,8 +100,10 @@ func setupFlags(cmd *cobra.Command) error {
 		cmd.Flags().String("peer-tls-ca-file", "", "Path to peer certificate authority.")
 		cmd.Flags().String("optl-collector-endpoint", otelCollectorEndpoint, "Endpoint for OTPL tracing collector.")
 		cmd.Flags().Bool("otpl-collector-insecure", true, "Flag to enable insecure mode for OTPL Collector.")
+
 		return viper.BindPFlags(cmd.Flags())
 	}
+
 	return nil
 }
 
@@ -109,6 +118,7 @@ func main() {
 	if err := setupFlags(cmd); err != nil {
 		log.Fatal(err)
 	}
+
 	if err := cmd.Execute(); err != nil {
 		log.Fatal(err)
 	}

@@ -83,7 +83,7 @@ func (g grpcServer) GetMetadata(ctx context.Context, request *grpc_api.GetStoryM
 	if err != nil {
 		return nil, err
 	}
-	storyMetadata.LoadStories()
+	storyMetadata.LoadStories(ctx)
 	storiesBytes, err := json.Marshal(storyMetadata.Stories)
 	if err != nil {
 		return nil, err

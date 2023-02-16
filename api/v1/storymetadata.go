@@ -3,6 +3,7 @@ package storymetadata_v1
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -18,9 +19,9 @@ import (
 )
 
 const (
-	AVERAGE_ADULT_WPM = 238
-	STORY_STREAM_URL  = "https://api.axios.com/api/render/stream/content/"
-	STORY_URL         = "https://api.axios.com/api/render/content/"
+	AverageAdultWpm = 238
+	StoryStreamUrl  = "https://api.axios.com/api/render/stream/content/"
+	StoryUrl        = "https://api.axios.com/api/render/content/"
 )
 
 type StoryStream struct {
@@ -28,10 +29,6 @@ type StoryStream struct {
 	Next     *string  `json:"next"`
 	Previous *string  `json:"previous"`
 	Results  []string `json:"results"`
-}
-
-type StoryMetadataResultI interface {
-	LoadStories() *StoryMetadataResult
 }
 
 type StoryMetadataResult struct {
@@ -79,12 +76,12 @@ func (s *StoryMetadata) calculateReadabilityScore() error {
 	return nil
 }
 
-// calculateReadingTime calculates the average adult reading time based on StoryMetadata.WordCount and AVERAGE_ADULT_WPM then sets StoryMetadata.ReadingTime
+// calculateReadingTime calculates the average adult reading time based on StoryMetadata.WordCount and AverageAdultWpm then sets StoryMetadata.ReadingTime
 func (s *StoryMetadata) calculateReadingTime() error {
 	if s.WordCount == 0 {
 		return fmt.Errorf("unable to calculate read time for story with id [%s]: word count is zero", s.id)
 	}
-	wpm := s.WordCount / AVERAGE_ADULT_WPM
+	wpm := s.WordCount / AverageAdultWpm
 	if wpm == 0 {
 		s.ReadingTime = "<1"
 		return nil
@@ -143,7 +140,7 @@ func New(numOfStreamPages int) (*StoryMetadataResult, error) {
 
 // LoadStories gets and processes the number of stream pages (set by New).
 // LoadStories calls StoryMetadata.CalculateWordCount and StoryMetadata.CalculateReadingTime
-func (sr *StoryMetadataResult) LoadStories() *StoryMetadataResult {
+func (sr *StoryMetadataResult) LoadStories(ctx context.Context) *StoryMetadataResult {
 	if sr.numOfStreamPages < 0 {
 		close(sr.storyMetadataResults)
 		close(sr.errsChan)
@@ -153,8 +150,8 @@ func (sr *StoryMetadataResult) LoadStories() *StoryMetadataResult {
 		sr.numOfStreamPages = 1
 	}
 	// get story streams with provided number of pages
-	go sr.getStoryStream(sr.numOfStreamPages)
-	go sr.getStoryMetadata()
+	go sr.getStoryStream(ctx, sr.numOfStreamPages)
+	go sr.getStoryMetadata(ctx)
 	for {
 		select {
 		case metadata, ok := <-sr.storyMetadataResults:
@@ -170,6 +167,10 @@ func (sr *StoryMetadataResult) LoadStories() *StoryMetadataResult {
 			sr.Errs = append(sr.Errs, &storyErr)
 			// increment the result count when an error occurs to ensure all goroutines return
 			sr.resultCount.Add(1)
+		case <-ctx.Done():
+			close(sr.storyMetadataResults)
+			close(sr.errsChan)
+			return sr
 		default:
 			if sr.resultCount.Load() == uint32(sr.numOfStreamPages*10) {
 				close(sr.storyMetadataResults)
@@ -181,13 +182,13 @@ func (sr *StoryMetadataResult) LoadStories() *StoryMetadataResult {
 }
 
 // getStoryMetadata creates StoryMetadata objects for each story in StoryMetadataResult.storyStreamResults and sends them to the StoryMetadataResult.storyMetadataResults channel
-func (sr *StoryMetadataResult) getStoryMetadata() {
+func (sr *StoryMetadataResult) getStoryMetadata(ctx context.Context) {
 	// get individual story metadata
 	for storyStream := range sr.storyStreamResults {
 		for _, storyId := range storyStream.Results {
 			go func(id string) {
 				metadata := &StoryMetadata{}
-				err := getResource(fmt.Sprintf("%s%s/", STORY_URL, id), metadata)
+				err := getResource(fmt.Sprintf("%s%s/", StoryUrl, id), metadata)
 				if err != nil {
 					sr.errsChan <- err
 					return
@@ -215,7 +216,12 @@ func (sr *StoryMetadataResult) getStoryMetadata() {
 					return
 				}
 				metadata.Blocks = nil
-				sr.storyMetadataResults <- metadata
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					sr.storyMetadataResults <- metadata
+				}
 				sr.resultCount.Add(1)
 				return
 			}(storyId)
@@ -224,25 +230,30 @@ func (sr *StoryMetadataResult) getStoryMetadata() {
 }
 
 // getStoryStream gets the number of story stream pages based on the value in StoryMetadataResult.numOfStreamPages and creates StoryStream objects for each story. Each StoryStream object is then pushed to the StoryMetadataResult.storyStreamResults channel
-func (sr *StoryMetadataResult) getStoryStream(numOfStreamPages int) {
+func (sr *StoryMetadataResult) getStoryStream(ctx context.Context, numOfStreamPages int) {
 	defer close(sr.storyStreamResults)
-	storyStream := &StoryStream{}
-	err := getResource(STORY_STREAM_URL, storyStream)
-	if err != nil {
-		sr.errsChan <- err
-		// if the initial story stream retrieve fails, no further stories can be processed, so we close the metadata results channel
-		close(sr.storyMetadataResults)
+	select {
+	case <-ctx.Done():
 		return
-	}
-	sr.storyStreamResults <- storyStream
-	for storyStream.Next != nil && numOfStreamPages != 1 {
-		if err = getResource(*storyStream.Next, storyStream); err != nil {
+	default:
+		storyStream := StoryStream{}
+		err := getResource(StoryStreamUrl, &storyStream)
+		if err != nil {
 			sr.errsChan <- err
-			numOfStreamPages--
+			// if the initial story stream retrieve fails, no further stories can be processed, so we close the metadata results channel
+			close(sr.storyMetadataResults)
 			return
 		}
-		sr.storyStreamResults <- storyStream
-		numOfStreamPages--
+		sr.storyStreamResults <- &storyStream
+		for storyStream.Next != nil && numOfStreamPages != 1 {
+			if err = getResource(*storyStream.Next, &storyStream); err != nil {
+				sr.errsChan <- err
+				numOfStreamPages--
+				return
+			}
+			sr.storyStreamResults <- &storyStream
+			numOfStreamPages--
+		}
 	}
 }
 
