@@ -18,17 +18,17 @@ type HttpConfig struct {
 	MiddlewareFuncs []mux.MiddlewareFunc
 }
 
-type httpSvrDeps struct {
-	httpTracer trace.Tracer
+type HttpSvrDeps struct {
+	HttpTracer trace.Tracer
 }
 
 func NewHTTPServer(cfg *HttpConfig) *http.Server {
-	storyMetadata := &httpSvrDeps{
-		httpTracer: otel.GetTracerProvider().Tracer("httpTracer"),
+	storyMetadata := &HttpSvrDeps{
+		HttpTracer: otel.GetTracerProvider().Tracer("httpTracer"),
 	}
 	r := mux.NewRouter()
-	r.HandleFunc("/v1/story_metadata", adaptor.GenericHttpAdaptor(storyMetadata.handleGetStoryMetadata)).Methods(http.MethodGet)
-	r.HandleFunc("/status", storyMetadata.handleStatus).Methods(http.MethodGet)
+	r.HandleFunc("/v1/story_metadata", adaptor.GenericHttpAdaptor(storyMetadata.HandleGetStoryMetadata)).Methods(http.MethodGet)
+	r.HandleFunc("/status", storyMetadata.HandleStatus).Methods(http.MethodGet)
 	r.Use(cfg.MiddlewareFuncs...)
 	return &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Port),
@@ -42,7 +42,7 @@ func NewHTTPServer(cfg *HttpConfig) *http.Server {
 //	@Success		200	{object}	string
 //
 //	@Router			/status [get]
-func (s *httpSvrDeps) handleStatus(w http.ResponseWriter, r *http.Request) {
+func (s *HttpSvrDeps) HandleStatus(w http.ResponseWriter, r *http.Request) {
 
 }
 
@@ -56,8 +56,8 @@ func (s *httpSvrDeps) handleStatus(w http.ResponseWriter, r *http.Request) {
 //	@Failure		400		{object}	string
 //	@Failure		404		{object}	string
 //	@Router			/v1/story_metadata [get]
-func (s *httpSvrDeps) handleGetStoryMetadata(ctx context.Context, in int) (out *storymetadata_v1.StoryMetadataResult, err error) {
-	_, span := s.httpTracer.Start(ctx, "/v1/story_metadata")
+func (s *HttpSvrDeps) HandleGetStoryMetadata(ctx context.Context, in int) (out *storymetadata_v1.StoryMetadataResult, err error) {
+	_, span := s.HttpTracer.Start(ctx, "/v1/story_metadata")
 	defer span.End()
 	storyMetadata, err := storymetadata_v1.New(in)
 	if err != nil {

@@ -29,7 +29,8 @@ func TestGrpcServer(t *testing.T) {
 		"unauthorized fails": testUnauthorized,
 	} {
 		t.Run(scenario, func(t *testing.T) {
-			tp, err := observability.NewTrace("test.grpc.storymetadatagenerator", "localhost:4317", true)
+			tp, err := observability.NewTrace("test.grpc.storymetadatagenerator",
+				"localhost:4317", true)
 			require.NoError(t, err)
 			rootClient, nobodyClient, teardown := setupTest(t, tp)
 			defer teardown()
@@ -38,7 +39,8 @@ func TestGrpcServer(t *testing.T) {
 	}
 }
 
-func setupTest(t *testing.T, tp *sdktrace.TracerProvider) (rootClient, nobodyClient api.StorymetadataClient, teardown func()) {
+func setupTest(t *testing.T, tp *sdktrace.TracerProvider) (rootClient, nobodyClient api.StorymetadataClient,
+	teardown func()) {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -52,7 +54,8 @@ func setupTest(t *testing.T, tp *sdktrace.TracerProvider) (rootClient, nobodyCli
 		})
 		require.NoError(t, err)
 		tlsCreds := credentials.NewTLS(tlsConfig)
-		opts := []grpc.DialOption{grpc.WithTransportCredentials(tlsCreds), grpc.WithUnaryInterceptor(otelgrpc.UnaryClientInterceptor(otelgrpc.WithTracerProvider(tp))),
+		opts := []grpc.DialOption{grpc.WithTransportCredentials(tlsCreds),
+			grpc.WithUnaryInterceptor(otelgrpc.UnaryClientInterceptor(otelgrpc.WithTracerProvider(tp))),
 			grpc.WithStreamInterceptor(otelgrpc.StreamClientInterceptor(otelgrpc.WithTracerProvider(tp)))}
 		conn, err := grpc.Dial(l.Addr().String(), opts...)
 		require.NoError(t, err)

@@ -21,7 +21,7 @@ import (
 const (
 	AverageAdultWpm = 238
 	StoryStreamUrl  = "https://api.axios.com/api/render/stream/content/"
-	StoryUrl        = "https://api.axios.com/api/render/content/"
+	StoryUrlBase    = "https://api.axios.com/api/render/content/"
 )
 
 type StoryStream struct {
@@ -165,8 +165,6 @@ func (sr *StoryMetadataResult) LoadStories(ctx context.Context) *StoryMetadataRe
 				Err: err,
 			}.Error()
 			sr.Errs = append(sr.Errs, &storyErr)
-			// increment the result count when an error occurs to ensure all goroutines return
-			sr.resultCount.Add(1)
 		case <-ctx.Done():
 			close(sr.storyMetadataResults)
 			close(sr.errsChan)
@@ -187,10 +185,12 @@ func (sr *StoryMetadataResult) getStoryMetadata(ctx context.Context) {
 	for storyStream := range sr.storyStreamResults {
 		for _, storyId := range storyStream.Results {
 			go func(id string) {
+				defer sr.resultCount.Add(1)
 				metadata := &StoryMetadata{}
-				err := getResource(fmt.Sprintf("%s%s/", StoryUrl, id), metadata)
+				storyUrl := fmt.Sprintf("%s%s/", StoryUrlBase, id)
+				err := getResource(storyUrl, metadata)
 				if err != nil {
-					sr.errsChan <- err
+					sr.errsChan <- errors.Wrapf(err, "getStoryMetadata->getResource(%v)", storyUrl)
 					return
 				}
 				metadata.id = id
@@ -222,7 +222,6 @@ func (sr *StoryMetadataResult) getStoryMetadata(ctx context.Context) {
 				default:
 					sr.storyMetadataResults <- metadata
 				}
-				sr.resultCount.Add(1)
 				return
 			}(storyId)
 		}
@@ -239,7 +238,7 @@ func (sr *StoryMetadataResult) getStoryStream(ctx context.Context, numOfStreamPa
 		storyStream := StoryStream{}
 		err := getResource(StoryStreamUrl, &storyStream)
 		if err != nil {
-			sr.errsChan <- err
+			sr.errsChan <- errors.Wrapf(err, "getStoryStream->getResource(%v)", StoryStreamUrl)
 			// if the initial story stream retrieve fails, no further stories can be processed, so we close the metadata results channel
 			close(sr.storyMetadataResults)
 			return
@@ -247,7 +246,7 @@ func (sr *StoryMetadataResult) getStoryStream(ctx context.Context, numOfStreamPa
 		sr.storyStreamResults <- &storyStream
 		for storyStream.Next != nil && numOfStreamPages != 1 {
 			if err = getResource(*storyStream.Next, &storyStream); err != nil {
-				sr.errsChan <- err
+				sr.errsChan <- errors.Wrapf(err, "getStoryStream->getResource(%v)", *storyStream.Next)
 				numOfStreamPages--
 				return
 			}
