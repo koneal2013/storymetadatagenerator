@@ -24,6 +24,8 @@ const (
 	StoryUrlBase    = "https://api.axios.com/api/render/content/"
 )
 
+var RequestCancelledErr = errors.New("request cancelled")
+
 type StoryStream struct {
 	Count    int      `json:"count"`
 	Next     *string  `json:"next"`
@@ -33,7 +35,7 @@ type StoryStream struct {
 
 type StoryMetadataResult struct {
 	Stories              map[string]*StoryMetadata `json:"stories"`
-	Errs                 []*string                 `json:"errors,omitempty"`
+	Errs                 []string                  `json:"errors,omitempty"`
 	errsChan             chan error
 	storyMetadataResults chan *StoryMetadata
 	storyStreamResults   chan *StoryStream
@@ -125,7 +127,7 @@ func (s *StoryMetadata) calculateCount(tokenizer *sentences.DefaultSentenceToken
 }
 
 // New takes the number of steam pages to retrieve as a parameter and returns a pointer to a StoryMetadataResult struct
-func New(numOfStreamPages int) (*StoryMetadataResult, error) {
+func New(numOfStreamPages int) *StoryMetadataResult {
 	chanSize := int(float64(numOfStreamPages) * 0.05)
 	// load metadata for sentence tokenizer
 	return &StoryMetadataResult{
@@ -134,7 +136,7 @@ func New(numOfStreamPages int) (*StoryMetadataResult, error) {
 		storyStreamResults:   make(chan *StoryStream, chanSize),
 		errsChan:             make(chan error, 1),
 		numOfStreamPages:     numOfStreamPages,
-	}, nil
+	}
 }
 
 // LoadStories gets and processes the number of stream pages (set by New).
@@ -155,7 +157,6 @@ func (sr *StoryMetadataResult) LoadStories(ctx context.Context) *StoryMetadataRe
 		select {
 		case metadata, ok := <-sr.storyMetadataResults:
 			if !ok {
-				close(sr.errsChan)
 				return sr
 			}
 			sr.Stories[metadata.id] = metadata
@@ -163,10 +164,9 @@ func (sr *StoryMetadataResult) LoadStories(ctx context.Context) *StoryMetadataRe
 			storyErr := ErrorStoryMetadata{
 				Err: err,
 			}.Error()
-			sr.Errs = append(sr.Errs, &storyErr)
+			sr.Errs = append(sr.Errs, storyErr)
 		case <-ctx.Done():
-			close(sr.storyMetadataResults)
-			close(sr.errsChan)
+			sr.Errs = append(sr.Errs, RequestCancelledErr.Error())
 			return sr
 		}
 	}
@@ -185,7 +185,7 @@ func (sr *StoryMetadataResult) getStoryMetadata(ctx context.Context) {
 				defer sr.wg.Done()
 				metadata := &StoryMetadata{}
 				storyUrl := fmt.Sprintf("%s%s/", StoryUrlBase, id)
-				err := getResource(storyUrl, metadata)
+				err := getResource(ctx, storyUrl, metadata)
 				if err != nil {
 					sr.errsChan <- errors.Wrapf(err, "getStoryMetadata->getResource(%v)", storyUrl)
 					return
@@ -233,7 +233,7 @@ func (sr *StoryMetadataResult) getStoryStream(ctx context.Context, numOfStreamPa
 		return
 	default:
 		storyStream := StoryStream{}
-		err := getResource(StoryStreamUrl, &storyStream)
+		err := getResource(ctx, StoryStreamUrl, &storyStream)
 		if err != nil {
 			sr.errsChan <- errors.Wrapf(err, "getStoryStream->getResource(%v)", StoryStreamUrl)
 			// if the initial story stream retrieve fails, no further stories can be processed, so we close the metadata results channel
@@ -242,7 +242,7 @@ func (sr *StoryMetadataResult) getStoryStream(ctx context.Context, numOfStreamPa
 		}
 		sr.storyStreamResults <- &storyStream
 		for storyStream.Next != nil && numOfStreamPages != 1 {
-			if err = getResource(*storyStream.Next, &storyStream); err != nil {
+			if err = getResource(ctx, *storyStream.Next, &storyStream); err != nil {
 				sr.errsChan <- errors.Wrapf(err, "getStoryStream->getResource(%v)", *storyStream.Next)
 				numOfStreamPages--
 				return
@@ -253,8 +253,13 @@ func (sr *StoryMetadataResult) getStoryStream(ctx context.Context, numOfStreamPa
 	}
 }
 
-func getResource[T StoryStream | StoryMetadata](url string, resource *T) error {
-	resp, err := http.Get(url)
+func getResource[T StoryStream | StoryMetadata](ctx context.Context, url string, resource *T) error {
+	client := http.Client{}
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req.WithContext(ctx))
 	if err != nil {
 		return errors.WithMessagef(err, "error getting resource located at [%s]: ", url)
 	}

@@ -59,10 +59,7 @@ func (s *HttpSvrDeps) HandleStatus(w http.ResponseWriter, r *http.Request) {
 func (s *HttpSvrDeps) HandleGetStoryMetadata(ctx context.Context, in int) (out *storymetadata_v1.StoryMetadataResult, err error) {
 	_, span := s.HttpTracer.Start(ctx, "/v1/story_metadata")
 	defer span.End()
-	storyMetadata, err := storymetadata_v1.New(in)
-	if err != nil {
-		return
-	}
-	out = storyMetadata.LoadStories(ctx)
+	out = storymetadata_v1.New(in).LoadStories(ctx)
+	fmt.Println(out)
 	return
 }

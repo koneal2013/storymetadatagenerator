@@ -80,10 +80,7 @@ func (g grpcServer) GetMetadata(ctx context.Context, request *grpc_api.GetStoryM
 		span.SetStatus(otel_codes.Error, err.Error())
 		return nil, err
 	}
-	storyMetadata, err := metadata_api_v1.New(int(request.NumberOfPages))
-	if err != nil {
-		return nil, err
-	}
+	storyMetadata := metadata_api_v1.New(int(request.NumberOfPages))
 	storyMetadata.LoadStories(ctx)
 	storiesBytes, err := json.Marshal(storyMetadata.Stories)
 	if err != nil {
