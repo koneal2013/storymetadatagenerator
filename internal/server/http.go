@@ -60,6 +60,5 @@ func (s *HttpSvrDeps) HandleGetStoryMetadata(ctx context.Context, in int) (out *
 	_, span := s.HttpTracer.Start(ctx, "/v1/story_metadata")
 	defer span.End()
 	out = storymetadata_v1.New(in).LoadStories(ctx)
-	fmt.Println(out)
 	return
 }
