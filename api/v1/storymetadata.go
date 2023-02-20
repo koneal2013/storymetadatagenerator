@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"sync/atomic"
+	"sync"
 
 	"github.com/neurosnap/sentences"
 	"github.com/neurosnap/sentences/english"
@@ -37,7 +37,7 @@ type StoryMetadataResult struct {
 	errsChan             chan error
 	storyMetadataResults chan *StoryMetadata
 	storyStreamResults   chan *StoryStream
-	resultCount          *atomic.Uint32
+	wg                   sync.WaitGroup
 	numOfStreamPages     int
 }
 
@@ -133,7 +133,6 @@ func New(numOfStreamPages int) (*StoryMetadataResult, error) {
 		storyMetadataResults: make(chan *StoryMetadata, chanSize),
 		storyStreamResults:   make(chan *StoryStream, chanSize),
 		errsChan:             make(chan error, 1),
-		resultCount:          &atomic.Uint32{},
 		numOfStreamPages:     numOfStreamPages,
 	}, nil
 }
@@ -169,23 +168,21 @@ func (sr *StoryMetadataResult) LoadStories(ctx context.Context) *StoryMetadataRe
 			close(sr.storyMetadataResults)
 			close(sr.errsChan)
 			return sr
-		default:
-			if sr.resultCount.Load() == uint32(sr.numOfStreamPages*10) {
-				close(sr.storyMetadataResults)
-				close(sr.errsChan)
-				return sr
-			}
 		}
 	}
 }
 
-// getStoryMetadata creates StoryMetadata objects for each story in StoryMetadataResult.storyStreamResults and sends them to the StoryMetadataResult.storyMetadataResults channel
+// getStoryMetadata creates StoryMetadata objects for each story in StoryMetadataResult.storyStreamResults
+// and sends them to the StoryMetadataResult.storyMetadataResults channel
 func (sr *StoryMetadataResult) getStoryMetadata(ctx context.Context) {
+	defer close(sr.storyMetadataResults)
+	defer sr.wg.Wait()
 	// get individual story metadata
 	for storyStream := range sr.storyStreamResults {
 		for _, storyId := range storyStream.Results {
+			sr.wg.Add(1)
 			go func(id string) {
-				defer sr.resultCount.Add(1)
+				defer sr.wg.Done()
 				metadata := &StoryMetadata{}
 				storyUrl := fmt.Sprintf("%s%s/", StoryUrlBase, id)
 				err := getResource(storyUrl, metadata)
