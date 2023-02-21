@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -128,13 +129,12 @@ func (s *StoryMetadata) calculateCount(tokenizer *sentences.DefaultSentenceToken
 
 // New takes the number of steam pages to retrieve as a parameter and returns a pointer to a StoryMetadataResult struct
 func New(numOfStreamPages int) *StoryMetadataResult {
-	chanSize := int(float64(numOfStreamPages) * 0.05)
-	// load metadata for sentence tokenizer
+	chanSize := runtime.NumCPU()
 	return &StoryMetadataResult{
 		Stories:              map[string]*StoryMetadata{},
 		storyMetadataResults: make(chan *StoryMetadata, chanSize),
 		storyStreamResults:   make(chan *StoryStream, chanSize),
-		errsChan:             make(chan error, 1),
+		errsChan:             make(chan error, chanSize),
 		numOfStreamPages:     numOfStreamPages,
 	}
 }
