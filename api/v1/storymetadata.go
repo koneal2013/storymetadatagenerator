@@ -133,7 +133,7 @@ func New(numOfStreamPages int) *StoryMetadataResult {
 	return &StoryMetadataResult{
 		Stories:              map[string]*StoryMetadata{},
 		storyMetadataResults: make(chan *StoryMetadata, chanSize),
-		storyStreamResults:   make(chan *StoryStream, chanSize),
+		storyStreamResults:   make(chan *StoryStream),
 		errsChan:             make(chan error, chanSize),
 		numOfStreamPages:     numOfStreamPages,
 	}
@@ -178,78 +178,80 @@ func (sr *StoryMetadataResult) getStoryMetadata(ctx context.Context) {
 	defer close(sr.storyMetadataResults)
 	defer sr.wg.Wait()
 	// get individual story metadata
-	for storyStream := range sr.storyStreamResults {
-		for _, storyId := range storyStream.Results {
-			sr.wg.Add(1)
-			go func(id string) {
-				defer sr.wg.Done()
-				metadata := &StoryMetadata{}
-				storyUrl := fmt.Sprintf("%s%s/", StoryUrlBase, id)
-				err := getResource(ctx, storyUrl, metadata)
-				if err != nil {
-					sr.errsChan <- errors.Wrapf(err, "getStoryMetadata->getResource(%v)", storyUrl)
-					return
+	sr.createStoryStreamWorkerPool(ctx)
+}
+
+func (sr *StoryMetadataResult) createStoryStreamWorkerPool(ctx context.Context) {
+	g := runtime.NumCPU()
+	sr.wg.Add(g)
+	for g != 0 {
+		go func() {
+			defer sr.wg.Done()
+			for stream := range sr.storyStreamResults {
+				for _, storyId := range stream.Results {
+					metadata := StoryMetadata{}
+					storyUrl := fmt.Sprintf("%s%s/", StoryUrlBase, storyId)
+					err := getResource(ctx, storyUrl, &metadata)
+					if err != nil {
+						sr.errsChan <- errors.Wrapf(err, "getStoryMetadata->getResource(%v)", storyUrl)
+						return
+					}
+					metadata.id = storyId
+					// load and instantiate the sentence tokenizer for each goroutine
+					t, err := english.NewSentenceTokenizer(nil)
+					if err != nil {
+						sr.errsChan <- errors.Wrapf(err, "could not load sentence tokenizer for story id [%s]", storyId)
+						return
+					}
+					err = metadata.calculateCount(t)
+					if err != nil {
+						sr.errsChan <- err
+						return
+					}
+					err = metadata.calculateReadingTime()
+					if err != nil {
+						sr.errsChan <- err
+						return
+					}
+					err = metadata.calculateReadabilityScore()
+					if err != nil {
+						sr.errsChan <- err
+						return
+					}
+					metadata.Blocks = nil
+					select {
+					case <-ctx.Done():
+						return
+					default:
+						sr.storyMetadataResults <- &metadata
+					}
 				}
-				metadata.id = id
-				// load and instantiate the sentence tokenizer for each goroutine
-				t, err := english.NewSentenceTokenizer(nil)
-				if err != nil {
-					sr.errsChan <- errors.Wrapf(err, "could not load sentence tokenizer for story id [%s]", id)
-					return
-				}
-				err = metadata.calculateCount(t)
-				if err != nil {
-					sr.errsChan <- err
-					return
-				}
-				err = metadata.calculateReadingTime()
-				if err != nil {
-					sr.errsChan <- err
-					return
-				}
-				err = metadata.calculateReadabilityScore()
-				if err != nil {
-					sr.errsChan <- err
-					return
-				}
-				metadata.Blocks = nil
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					sr.storyMetadataResults <- metadata
-				}
-				return
-			}(storyId)
-		}
+			}
+		}()
+		g--
 	}
 }
 
 // getStoryStream gets the number of story stream pages based on the value in StoryMetadataResult.numOfStreamPages and creates StoryStream objects for each story. Each StoryStream object is then pushed to the StoryMetadataResult.storyStreamResults channel
 func (sr *StoryMetadataResult) getStoryStream(ctx context.Context, numOfStreamPages int) {
 	defer close(sr.storyStreamResults)
-	select {
-	case <-ctx.Done():
+	storyStream := StoryStream{}
+	err := getResource(ctx, StoryStreamUrl, &storyStream)
+	if err != nil {
+		sr.errsChan <- errors.Wrapf(err, "getStoryStream->getResource(%v)", StoryStreamUrl)
+		// if the initial story stream retrieve fails, no further stories can be processed, so we close the metadata results channel
+		close(sr.storyMetadataResults)
 		return
-	default:
-		storyStream := StoryStream{}
-		err := getResource(ctx, StoryStreamUrl, &storyStream)
-		if err != nil {
-			sr.errsChan <- errors.Wrapf(err, "getStoryStream->getResource(%v)", StoryStreamUrl)
-			// if the initial story stream retrieve fails, no further stories can be processed, so we close the metadata results channel
-			close(sr.storyMetadataResults)
+	}
+	sr.storyStreamResults <- &storyStream
+	for storyStream.Next != nil && numOfStreamPages != 1 {
+		if err = getResource(ctx, *storyStream.Next, &storyStream); err != nil {
+			sr.errsChan <- errors.Wrapf(err, "getStoryStream->getResource(%v)", *storyStream.Next)
+			numOfStreamPages--
 			return
 		}
 		sr.storyStreamResults <- &storyStream
-		for storyStream.Next != nil && numOfStreamPages != 1 {
-			if err = getResource(ctx, *storyStream.Next, &storyStream); err != nil {
-				sr.errsChan <- errors.Wrapf(err, "getStoryStream->getResource(%v)", *storyStream.Next)
-				numOfStreamPages--
-				return
-			}
-			sr.storyStreamResults <- &storyStream
-			numOfStreamPages--
-		}
+		numOfStreamPages--
 	}
 }
 
