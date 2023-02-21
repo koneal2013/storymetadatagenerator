@@ -194,7 +194,7 @@ func (sr *StoryMetadataResult) getStoryMetadata(ctx context.Context) {
 				// load and instantiate the sentence tokenizer for each goroutine
 				t, err := english.NewSentenceTokenizer(nil)
 				if err != nil {
-					sr.errsChan <- errors.WithMessagef(err, "could not load sentence tokenizer for story id [%s]", id)
+					sr.errsChan <- errors.Wrapf(err, "could not load sentence tokenizer for story id [%s]", id)
 					return
 				}
 				err = metadata.calculateCount(t)
@@ -261,14 +261,14 @@ func getResource[T StoryStream | StoryMetadata](ctx context.Context, url string,
 	}
 	resp, err := client.Do(req.WithContext(ctx))
 	if err != nil {
-		return errors.WithMessagef(err, "error getting resource located at [%s]: ", url)
+		return errors.Wrapf(err, "error getting resource located at [%s]: ", url)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("resource located at [%s] could not be found", url)
 	}
 	if err = json.NewDecoder(resp.Body).Decode(resource); err != nil {
-		return errors.WithMessagef(err, "error getting resource located at [%s]: ", url)
+		return errors.Wrapf(err, "error getting resource located at [%s]: ", url)
 	}
 	return nil
 }

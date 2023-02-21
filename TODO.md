@@ -1,4 +1,4 @@
-### Below is a list of features I would add to my solution given more time (unchecked = incomplete):
+### Below is a list of features I would add to my solution:
 
 - [x] Expose a Grpc and a Http Server listening on separate ports
 - [x] Implement logging middleware for Http server
