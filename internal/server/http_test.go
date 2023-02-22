@@ -16,6 +16,11 @@ import (
 	"github.com/koneal2013/storymetadatagenerator/internal/server"
 )
 
+const (
+	succeed = "\u2713"
+	failed  = "\u2717"
+)
+
 func TestHttpServer(t *testing.T) {
 	for scenario, fn := range map[string]func(t *testing.T){
 		"get status returns '200 ok'":                                 testGetStatus,
@@ -23,6 +28,11 @@ func TestHttpServer(t *testing.T) {
 	} {
 		t.Run(scenario, func(t *testing.T) {
 			fn(t)
+			if t.Failed() {
+				t.Logf("%s %s", scenario, failed)
+				return
+			}
+			t.Logf("%s %s", scenario, succeed)
 		})
 	}
 }
