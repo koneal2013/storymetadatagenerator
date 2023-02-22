@@ -191,9 +191,7 @@ func (sr *StoryMetadataResult) createStoryStreamWorkerPool(ctx context.Context) 
 		go func(w *sync.WaitGroup) {
 			defer w.Done()
 			for stream := range sr.storyStreamResults {
-				i := 0
-				for i < len(stream.Results) {
-					storyId := stream.Results[i]
+				for _, storyId := range stream.Results {
 					metadata := StoryMetadata{}
 					storyUrl := fmt.Sprintf("%s%s/", StoryUrlBase, storyId)
 					err := getResource(ctx, storyUrl, &metadata)
@@ -230,7 +228,6 @@ func (sr *StoryMetadataResult) createStoryStreamWorkerPool(ctx context.Context) 
 					default:
 						sr.storyMetadataResults <- metadata
 					}
-					i++
 				}
 			}
 		}(&wg)
