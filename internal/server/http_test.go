@@ -35,27 +35,42 @@ func testGetStoryMetadataSuccess(t *testing.T) {
 	svrDeps := server.HttpSvrDeps{
 		HttpTracer: otel.GetTracerProvider().Tracer("Test http trace"),
 	}
-	req := httptest.NewRequest("GET", "/v1/story_metadata", strings.NewReader("1"))
-	rr := httptest.NewRecorder()
+
 	handler := adaptor.GenericHttpAdaptor(svrDeps.HandleGetStoryMetadata)
-	handler.ServeHTTP(rr, req)
-	metadata := &storymetadata_v1.StoryMetadataResult{}
-	err = json.NewDecoder(rr.Body).Decode(metadata)
+	svr := mockServer(handler)
+	defer svr.Close()
+
+	req, err := http.NewRequest("GET", svr.URL, strings.NewReader("2"))
 	require.NoError(t, err)
-	expectedStoryLength := 10
+
+	client := http.Client{}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+
+	metadata := &storymetadata_v1.StoryMetadataResult{}
+	err = json.NewDecoder(resp.Body).Decode(metadata)
+	require.NoError(t, err)
+	expectedStoryLength := 20
 	require.Equal(t, expectedStoryLength, len(metadata.Stories))
 	require.Nil(t, metadata.Errs)
-	require.Equal(t, rr.Code, http.StatusOK)
+	require.Equal(t, resp.StatusCode, http.StatusOK)
 }
 
 func testGetStatus(t *testing.T) {
 	svrDeps := server.HttpSvrDeps{
 		HttpTracer: otel.GetTracerProvider().Tracer("Test http trace"),
 	}
-	req := httptest.NewRequest("GET", "/status", nil)
-	rr := httptest.NewRecorder()
 	handler := http.HandlerFunc(svrDeps.HandleStatus)
-	handler.ServeHTTP(rr, req)
 
-	require.Equal(t, rr.Code, http.StatusOK)
+	svr := mockServer(handler)
+	defer svr.Close()
+
+	resp, err := http.Get(svr.URL)
+	require.NoError(t, err)
+
+	require.Equal(t, resp.StatusCode, http.StatusOK)
+}
+
+func mockServer(f func(w http.ResponseWriter, r *http.Request)) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(f))
 }
