@@ -25,8 +25,6 @@ const (
 	StoryUrlBase    = "https://api.axios.com/api/render/content/"
 )
 
-var RequestCancelledErr = errors.New("request cancelled")
-
 type StoryStream struct {
 	Count    int      `json:"count"`
 	Next     *string  `json:"next"`
@@ -35,12 +33,12 @@ type StoryStream struct {
 }
 
 type StoryMetadataResult struct {
-	Stories              map[string]*StoryMetadata `json:"stories"`
-	Errs                 []string                  `json:"errors,omitempty"`
+	Stories              map[string]StoryMetadata `json:"stories"`
+	StoryCount           int                      `json:"storyCount"`
+	Errs                 []string                 `json:"errors,omitempty"`
 	errsChan             chan error
-	storyMetadataResults chan *StoryMetadata
-	storyStreamResults   chan *StoryStream
-	wg                   sync.WaitGroup
+	storyMetadataResults chan StoryMetadata
+	storyStreamResults   chan StoryStream
 	numOfStreamPages     int
 }
 
@@ -129,12 +127,11 @@ func (s *StoryMetadata) calculateCount(tokenizer *sentences.DefaultSentenceToken
 
 // New takes the number of steam pages to retrieve as a parameter and returns a pointer to a StoryMetadataResult struct
 func New(numOfStreamPages int) *StoryMetadataResult {
-	chanSize := runtime.NumCPU()
 	return &StoryMetadataResult{
-		Stories:              map[string]*StoryMetadata{},
-		storyMetadataResults: make(chan *StoryMetadata, chanSize),
-		storyStreamResults:   make(chan *StoryStream),
-		errsChan:             make(chan error, chanSize),
+		Stories:              make(map[string]StoryMetadata),
+		storyMetadataResults: make(chan StoryMetadata),
+		storyStreamResults:   make(chan StoryStream, 20),
+		errsChan:             make(chan error),
 		numOfStreamPages:     numOfStreamPages,
 	}
 }
@@ -144,19 +141,25 @@ func New(numOfStreamPages int) *StoryMetadataResult {
 func (sr *StoryMetadataResult) LoadStories(ctx context.Context) *StoryMetadataResult {
 	if sr.numOfStreamPages < 0 {
 		close(sr.storyMetadataResults)
-		close(sr.errsChan)
 		return sr
 	}
 	if sr.numOfStreamPages == 0 {
 		sr.numOfStreamPages = 1
 	}
+
+	workerPoolCtx, workerPoolCancel := context.WithCancel(context.Background())
+	// start worker pool
+	go sr.createStoryStreamWorkerPool(workerPoolCtx)
+
+	storyStreamCtx, storyStreamCancel := context.WithCancel(context.Background())
 	// get story streams with provided number of pages
-	go sr.getStoryStream(ctx, sr.numOfStreamPages)
-	go sr.getStoryMetadata(ctx)
+	go sr.getStoryStream(storyStreamCtx, sr.numOfStreamPages)
+
 	for {
 		select {
 		case metadata, ok := <-sr.storyMetadataResults:
 			if !ok {
+				sr.StoryCount = len(sr.Stories)
 				return sr
 			}
 			sr.Stories[metadata.id] = metadata
@@ -166,7 +169,9 @@ func (sr *StoryMetadataResult) LoadStories(ctx context.Context) *StoryMetadataRe
 			}.Error()
 			sr.Errs = append(sr.Errs, storyErr)
 		case <-ctx.Done():
-			sr.Errs = append(sr.Errs, RequestCancelledErr.Error())
+			storyStreamCancel()
+			workerPoolCancel()
+			sr.Errs = append(sr.Errs, ctx.Err().Error())
 			return sr
 		}
 	}
@@ -174,21 +179,21 @@ func (sr *StoryMetadataResult) LoadStories(ctx context.Context) *StoryMetadataRe
 
 // getStoryMetadata creates StoryMetadata objects for each story in StoryMetadataResult.storyStreamResults
 // and sends them to the StoryMetadataResult.storyMetadataResults channel
-func (sr *StoryMetadataResult) getStoryMetadata(ctx context.Context) {
-	defer close(sr.storyMetadataResults)
-	defer sr.wg.Wait()
-	// get individual story metadata
-	sr.createStoryStreamWorkerPool(ctx)
-}
-
 func (sr *StoryMetadataResult) createStoryStreamWorkerPool(ctx context.Context) {
+	var wg sync.WaitGroup
 	g := runtime.NumCPU()
-	sr.wg.Add(g)
-	for g != 0 {
-		go func() {
-			defer sr.wg.Done()
+	wg.Add(g)
+
+	defer close(sr.storyMetadataResults)
+	defer wg.Wait()
+
+	for g > 0 {
+		go func(w *sync.WaitGroup) {
+			defer w.Done()
 			for stream := range sr.storyStreamResults {
-				for _, storyId := range stream.Results {
+				i := 0
+				for i < len(stream.Results) {
+					storyId := stream.Results[i]
 					metadata := StoryMetadata{}
 					storyUrl := fmt.Sprintf("%s%s/", StoryUrlBase, storyId)
 					err := getResource(ctx, storyUrl, &metadata)
@@ -223,11 +228,12 @@ func (sr *StoryMetadataResult) createStoryStreamWorkerPool(ctx context.Context) 
 					case <-ctx.Done():
 						return
 					default:
-						sr.storyMetadataResults <- &metadata
+						sr.storyMetadataResults <- metadata
 					}
+					i++
 				}
 			}
-		}()
+		}(&wg)
 		g--
 	}
 }
@@ -239,18 +245,16 @@ func (sr *StoryMetadataResult) getStoryStream(ctx context.Context, numOfStreamPa
 	err := getResource(ctx, StoryStreamUrl, &storyStream)
 	if err != nil {
 		sr.errsChan <- errors.Wrapf(err, "getStoryStream->getResource(%v)", StoryStreamUrl)
-		// if the initial story stream retrieve fails, no further stories can be processed, so we close the metadata results channel
-		close(sr.storyMetadataResults)
 		return
 	}
-	sr.storyStreamResults <- &storyStream
+	sr.storyStreamResults <- storyStream
 	for storyStream.Next != nil && numOfStreamPages != 1 {
 		if err = getResource(ctx, *storyStream.Next, &storyStream); err != nil {
 			sr.errsChan <- errors.Wrapf(err, "getStoryStream->getResource(%v)", *storyStream.Next)
 			numOfStreamPages--
 			return
 		}
-		sr.storyStreamResults <- &storyStream
+		sr.storyStreamResults <- storyStream
 		numOfStreamPages--
 	}
 }
