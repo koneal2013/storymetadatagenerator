@@ -1,6 +1,7 @@
 package storymetadata_v1
 
 import (
+	"context"
 	"os"
 	"testing"
 
@@ -42,4 +43,11 @@ func TestCalculateReadabilityScore(t *testing.T) {
 
 	require.Equal(t, expectedReadabilityScore, metadata.ReadabilityScore)
 
+}
+
+func BenchmarkLoadStories(b *testing.B) {
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		New(1).LoadStories(context.Background())
+	}
 }

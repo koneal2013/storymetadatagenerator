@@ -145,13 +145,10 @@ func (sr *StoryMetadataResult) LoadStories(ctx context.Context) *StoryMetadataRe
 		sr.numOfStreamPages = 1
 	}
 
-	workerPoolCtx, workerPoolCancel := context.WithCancel(context.Background())
 	// start worker pool
-	go sr.createStoryStreamWorkerPool(workerPoolCtx)
-
-	storyStreamCtx, storyStreamCancel := context.WithCancel(context.Background())
+	go sr.startStoryStreamWorker(ctx)
 	// get story streams with provided number of pages
-	go sr.getStoryStream(storyStreamCtx, sr.numOfStreamPages)
+	go sr.getStoryStream(ctx, sr.numOfStreamPages)
 
 	for {
 		select {
@@ -167,8 +164,6 @@ func (sr *StoryMetadataResult) LoadStories(ctx context.Context) *StoryMetadataRe
 			}.Error()
 			sr.Errs = append(sr.Errs, storyErr)
 		case <-ctx.Done():
-			storyStreamCancel()
-			workerPoolCancel()
 			sr.Errs = append(sr.Errs, ctx.Err().Error())
 			return sr
 		}
@@ -177,7 +172,7 @@ func (sr *StoryMetadataResult) LoadStories(ctx context.Context) *StoryMetadataRe
 
 // getStoryMetadata creates StoryMetadata objects for each story in StoryMetadataResult.storyStreamResults
 // and sends them to the StoryMetadataResult.storyMetadataResults channel
-func (sr *StoryMetadataResult) createStoryStreamWorkerPool(ctx context.Context) {
+func (sr *StoryMetadataResult) startStoryStreamWorker(ctx context.Context) {
 	var wg sync.WaitGroup
 	g := runtime.NumCPU()
 	wg.Add(g)
