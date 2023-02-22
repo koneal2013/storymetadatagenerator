@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	succeed = "\u2713"
-	failed  = "\u2717"
+	succeed = "\u2714"
+	failed  = "\u2718"
 )
 
 func TestHttpServer(t *testing.T) {
