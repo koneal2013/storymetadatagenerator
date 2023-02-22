@@ -26,10 +26,8 @@ const (
 )
 
 type StoryStream struct {
-	Count    int      `json:"count"`
-	Next     *string  `json:"next"`
-	Previous *string  `json:"previous"`
-	Results  []string `json:"results"`
+	Next    *string  `json:"next"`
+	Results []string `json:"results"`
 }
 
 type StoryMetadataResult struct {
@@ -38,7 +36,7 @@ type StoryMetadataResult struct {
 	Errs                 []string                 `json:"errors,omitempty"`
 	errsChan             chan error
 	storyMetadataResults chan StoryMetadata
-	storyStreamResults   chan StoryStream
+	storyStreamResults   chan []string
 	numOfStreamPages     int
 }
 
@@ -130,7 +128,7 @@ func New(numOfStreamPages int) *StoryMetadataResult {
 	return &StoryMetadataResult{
 		Stories:              make(map[string]StoryMetadata),
 		storyMetadataResults: make(chan StoryMetadata),
-		storyStreamResults:   make(chan StoryStream, 20),
+		storyStreamResults:   make(chan []string),
 		errsChan:             make(chan error),
 		numOfStreamPages:     numOfStreamPages,
 	}
@@ -190,8 +188,8 @@ func (sr *StoryMetadataResult) createStoryStreamWorkerPool(ctx context.Context) 
 	for g > 0 {
 		go func(w *sync.WaitGroup) {
 			defer w.Done()
-			for stream := range sr.storyStreamResults {
-				for _, storyId := range stream.Results {
+			for streamResult := range sr.storyStreamResults {
+				for _, storyId := range streamResult {
 					metadata := StoryMetadata{}
 					storyUrl := fmt.Sprintf("%s%s/", StoryUrlBase, storyId)
 					err := getResource(ctx, storyUrl, &metadata)
@@ -244,14 +242,16 @@ func (sr *StoryMetadataResult) getStoryStream(ctx context.Context, numOfStreamPa
 		sr.errsChan <- errors.Wrapf(err, "getStoryStream->getResource(%v)", StoryStreamUrl)
 		return
 	}
-	sr.storyStreamResults <- storyStream
+	sr.storyStreamResults <- storyStream.Results
 	for storyStream.Next != nil && numOfStreamPages != 1 {
-		if err = getResource(ctx, *storyStream.Next, &storyStream); err != nil {
+		var nextStream StoryStream
+		if err = getResource(ctx, *storyStream.Next, &nextStream); err != nil {
 			sr.errsChan <- errors.Wrapf(err, "getStoryStream->getResource(%v)", *storyStream.Next)
 			numOfStreamPages--
 			return
 		}
-		sr.storyStreamResults <- storyStream
+		sr.storyStreamResults <- nextStream.Results
+		storyStream.Next = nextStream.Next
 		numOfStreamPages--
 	}
 }
